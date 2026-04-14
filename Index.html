@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Aero-Lab V7: Stable Edition</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; color: #0f0; font-family: sans-serif; font-weight: bold; }
+        canvas { display: block; }
+        .ui { 
+            position: absolute; top: 10px; left: 10px; 
+            background: rgba(0,25,0,0.9); padding: 8px; 
+            border: 1px solid #0f0; border-radius: 8px; z-index: 100;
+            width: 100px; box-shadow: 0 0 15px rgba(0,255,0,0.3);
+        }
+        .btn { 
+            background: #0f0; color: #000; border: none; padding: 6px; 
+            cursor: pointer; font-weight: bold; width: 100%; 
+            margin-bottom: 4px; font-size: 8px; text-transform: uppercase;
+            border-radius: 4px;
+        }
+        .btn:active { transform: scale(0.9); }
+        .st { font-size: 7px; color: #0f0; text-align: center; border-top: 1px solid #040; padding-top: 4px; }
+        b { color: #fff; }
+    </style>
+</head>
+<body>
+
+<div class="ui">
+    <button class="btn" style="background: #0af;" onclick="document.getElementById('u').click()">LOAD PNG</button>
+    <input type="file" id="u" accept="image/png" style="display:none">
+    <button class="btn" onclick="build('f22')">F-22 RAPTOR</button>
+    <button class="btn" onclick="build('dom')">DOMINATOR</button>
+    <div style="display:flex; gap:3px;">
+        <button class="btn" onclick="car.angle--">↑</button>
+        <button class="btn" onclick="car.angle++">↓</button>
+    </div>
+    <div class="st">LINES: <b>500</b><br>ANG: <b id="deg">0</b>°</div>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+    // СТРОГИЙ ПОРЯДОК ИНИЦИАЛИЗАЦИИ
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const pCanvas = document.createElement('canvas');
+    const pctx = pCanvas.getContext('2d', { willReadFrequently: true });
+    
+    let w, h, isReady = false, viewImg = null, hitMap = null, mapW, mapH, drawSc = 1;
+    let particles = [], car = { angle: 0 };
+
+    function resize() {
+        w = canvas.width = window.innerWidth;
+        h = canvas.height = window.innerHeight;
+        if (particles.length === 0) initAir();
+    }
+    window.addEventListener('resize', resize);
+
+    function build(type, isCustom = false, img = null) {
+        isReady = false;
+        mapW = isCustom ? Math.min(img.width, 2048) : 1200;
+        mapH = isCustom ? Math.min(img.height, 2048) : 600;
+        pCanvas.width = mapW; pCanvas.height = mapH;
+        pctx.clearRect(0, 0, mapW, mapH);
+
+        if (isCustom) {
+            pctx.drawImage(img, 0, 0, mapW, mapH);
+        } else if (type === 'f22') {
+            pctx.fillStyle = '#556677'; pctx.beginPath();
+            pctx.moveTo(100, 300); pctx.lineTo(1100, 280); pctx.lineTo(1150, 300);
+            pctx.lineTo(1100, 320); pctx.lineTo(100, 350); pctx.fill();
+        } else if (type === 'dom') {
+            pctx.fillStyle = '#222'; pctx.beginPath();
+            pctx.moveTo(100, 450); pctx.lineTo(300, 300); pctx.quadraticCurveTo(600, 250, 1000, 400);
+            pctx.lineTo(1100, 550); pctx.lineTo(100, 550); pctx.fill();
+            pctx.strokeStyle = '#444'; pctx.lineWidth = 4; pctx.stroke();
+        }
+
+        const data = pctx.getImageData(0, 0, mapW, mapH).data;
+        hitMap = new Uint8Array(mapW * mapH);
+        for(let i=0; i<data.length; i+=4) hitMap[i/4] = data[i+3] > 50 ? 1 : 0;
+        viewImg = pCanvas; 
+        isReady = true;
+    }
+
+    class Particle {
+        constructor(i) { this.idx = i; this.reset(Math.random() * w); }
+        reset(x) { 
+            this.x = x; this.iy = (this.idx / 500) * h; this.y = this.iy;
+            this.vx = 15 + Math.random()*7; this.vy = 0; this.h = []; this.st = 0; 
+        }
+        update() {
+            // ЗАЩИТА: нет карты — нет столкновений
+            if(!isReady || !hitMap) {
+                this.x += this.vx;
+                if(this.x > w + 50) this.reset(-50);
+                return;
+            }
+
+            let steps = 3, hit = false, fx = this.x + this.vx, fy = this.y + this.vy;
+            let rad = -car.angle * Math.PI / 180;
+
+            for(let s = 1; s <= steps; s++) {
+                let ix = this.x + (this.vx/steps)*s, iy = this.y + (this.vy/steps)*s;
+                let tx = (ix - w/2) / drawSc, ty = (iy - h/2) / drawSc;
+                let nx = tx * Math.cos(rad) - ty * Math.sin(rad) + mapW/2;
+                let ny = tx * Math.sin(rad) + ty * Math.cos(rad) + mapH/2;
+                let rx = Math.floor(nx), ry = Math.floor(ny);
+
+                if(rx >= 0 && rx < mapW && ry >= 0 && ry < mapH && hitMap[ry * mapW + rx]) {
+                    hit = true; fx = ix; fy = iy; break;
+                }
+            }
+
+            if(hit) {
+                this.st = 1; this.vx *= 0.1; this.vy += (this.y < h/2) ? -12 : 12;
+            } else {
+                this.vy *= 0.85; this.vx += (22 - this.vx) * 0.1;
+                this.y += (this.iy - this.y) * 0.1;
+                this.st = (this.vx < 16) ? 2 : 0;
+            }
+            this.x = fx; this.y = fy;
+            this.h.push({x: this.x, y: this.y, s: this.st});
+            if(this.h.length > 6) this.h.shift();
+            if(this.x > w + 50) this.reset(-50);
+        }
+        draw() {
+            if(this.h.length < 2) return;
+            ctx.beginPath(); ctx.lineWidth = 2;
+            ctx.strokeStyle = ['#0f6', '#f33', '#0cf'][this.st];
+            ctx.moveTo(this.h[0].x, this.h[0].y);
+            for(let p of this.h) ctx.lineTo(p.x, p.y);
+            ctx.stroke();
+        }
+    }
+
+    function initAir() {
+        particles = [];
+        for(let i=0; i<500; i++) particles.push(new Particle(i));
+    }
+
+    function animate() {
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+        if(isReady && viewImg) {
+            ctx.save(); ctx.translate(w/2, h/2); ctx.rotate(car.angle * Math.PI / 180);
+            drawSc = Math.min((w * 0.75) / mapW, (h * 0.5) / mapH); 
+            ctx.drawImage(viewImg, -mapW*drawSc/2, -mapH*drawSc/2, mapW*drawSc, mapH*drawSc);
+            ctx.restore();
+            document.getElementById('deg').innerText = car.angle;
+        }
+        particles.forEach(p => { p.update(); p.draw(); });
+        requestAnimationFrame(animate);
+    }
+
+    document.getElementById('u').onchange = (e) => {
+        const r = new FileReader();
+        r.onload = (ev) => {
+            const i = new Image();
+            i.onload = () => build(null, true, i);
+            i.src = ev.target.result;
+        };
+        r.readAsDataURL(e.target.files[0]);
+    };
+
+    resize(); build('dom'); animate();
+</script>
+</body>
+</html>
